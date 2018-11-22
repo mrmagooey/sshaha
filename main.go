@@ -3,12 +3,10 @@ package main // import "github.com/mrmagooey/sshaha/modules"
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
 	"os/exec"
-	"sync"
 	"syscall"
 
 	"crypto/rand"
@@ -140,33 +138,69 @@ func handleEnv(req *ssh.Request) bool {
 }
 
 func handleShell(channel ssh.Channel, req *ssh.Request, tty *os.File, f *os.File) bool {
-	shell := defaultShell
-	fmt.Println("shell request")
-	cmd := exec.Command(shell)
-	cmd.Env = []string{"TERM=xterm"}
-	err := ptyRun(cmd, tty)
-	if err != nil {
-		log.Printf("%s", err)
-	}
+	// gnomeKeychainTrick(channel)
+	signalsTrick(channel)
+	// line, more, err := bio.ReadLine()
 
-	// Teardown session
-	var once sync.Once
-	close := func() {
-		channel.Close()
-		log.Printf("session closed")
-	}
+	// fmt.Print(more)
+	// fmt.Print(err)
+	// s := string(line)
+	// fmt.Println(s)
 
-	// Pipe session to bash and visa-versa
-	go func() {
-		io.Copy(channel, f)
-		once.Do(close)
-	}()
+	// in case you need a string which contains the newline
+	// s, err := bio.ReadString('\n')
+	// fmt.Println(s)
 
-	go func() {
-		io.Copy(f, channel)
-		once.Do(close)
-	}()
+	//	ioutil.ReadAll(channel)
 
+	// scanner := bufio.NewScanner(channel) //
+
+	//	scanner.Split(bufio.ScanWords)
+
+	// for scanner.Scan() {
+	// 	fmt.Println("c")
+	// 	line := scanner.Text()
+	// 	fmt.Println("c")
+	// 	if line == "\n" {
+	// 		break
+	// 	}
+	// 	fmt.Println(line)
+
+	// }
+
+	// if b, err := ioutil.ReadAll(channel); err == nil {
+	// 	fmt.Println(string(b))
+	// }
+
+	// buf := new(bytes.Buffer)
+	// buf.ReadFrom(channel)
+
+	// s := buf.String()
+	// fmt.Println("c")
+	// fmt.Println(s)
+
+	// shell := defaultShell
+	// cmd := exec.Command(shell)
+	// cmd.Env = []string{"TERM=xterm"}
+	// err := ptyRun(cmd, tty)
+	// if err != nil {
+	// 	log.Printf("%s", err)
+	// }
+	// // Teardown session
+	// var once sync.Once
+	// close := func() {
+	// 	channel.Close()
+	// 	log.Printf("session closed")
+	// }
+	// // Pipe session to bash and visa-versa
+	// go func() {
+	// 	io.Copy(channel, f)
+	// 	once.Do(close)
+	// }()
+	// go func() {
+	// 	io.Copy(f, channel)
+	// 	once.Do(close)
+	// }()
 	// // We don't accept any commands (Payload),
 	// // only the default shell.
 	// if len(req.Payload) == 0 {
@@ -178,9 +212,8 @@ func handleShell(channel ssh.Channel, req *ssh.Request, tty *os.File, f *os.File
 }
 
 func handleRequest(in <-chan *ssh.Request, channel ssh.Channel, tty *os.File, f *os.File) error {
-
 	for req := range in {
-		log.Printf("%v %s", req.Payload, req.Payload)
+		// log.Printf("%v %s", req.Payload, req.Payload)
 		ok := false
 		switch req.Type {
 		case "exec":
@@ -194,11 +227,9 @@ func handleRequest(in <-chan *ssh.Request, channel ssh.Channel, tty *os.File, f 
 		case "env":
 			ok = handleEnv(req)
 		}
-
 		if !ok {
 			return fmt.Errorf("declining %s request", req.Type)
 		}
-
 		req.Reply(ok, nil)
 	}
 	return nil
@@ -207,10 +238,6 @@ func handleRequest(in <-chan *ssh.Request, channel ssh.Channel, tty *os.File, f 
 func handleChannels(chans <-chan ssh.NewChannel) {
 	// Service the incoming Channel channel.
 	for newChannel := range chans {
-		// Channels have a type, depending on the application level
-		// protocol intended. In the case of a shell, the type is
-		// "session" and ServerShell may be used to present a simple
-		// terminal interface.
 		if t := newChannel.ChannelType(); t != "session" {
 			newChannel.Reject(ssh.UnknownChannelType, fmt.Sprintf("unknown channel type: %s", t))
 			continue
@@ -220,23 +247,16 @@ func handleChannels(chans <-chan ssh.NewChannel) {
 			log.Printf("could not accept channel (%s)", err)
 			continue
 		}
-
-		// allocate a terminal for this channel
-		log.Print("creating pty...")
-		// Create new pty
 		f, tty, err := pty.Open()
 		if err != nil {
 			log.Printf("could not start pty (%s)", err)
 			continue
 		}
-
 		go handleRequest(requests, channel, tty, f)
 	}
 }
 
 func main() {
-	// An SSH server is represented by a ServerConfig, which holds
-	// certificate details and handles authentication of ServerConns.
 	config := &ssh.ServerConfig{
 		NoClientAuth: true,
 		// Remove to disable password auth.
@@ -268,6 +288,7 @@ func main() {
 	if err != nil {
 		log.Fatal("failed to listen for connection: ", err)
 	}
+
 	nConn, err := listener.Accept()
 	if err != nil {
 		log.Fatal("failed to accept incoming connection: ", err)
