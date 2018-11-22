@@ -67,14 +67,12 @@ func handleEnv(req *ssh.Request) bool {
 
 func handleShell(channel ssh.Channel, req *ssh.Request, tty *os.File, f *os.File, connDetails map[string]string) bool {
 	// gnomeKeychainTrick(channel)
-	signalsTrick(channel)
+	signalsTrick(channel, connDetails)
 	return true
-
 }
 
 func handleRequest(in <-chan *ssh.Request, channel ssh.Channel, tty *os.File, f *os.File, connDetails map[string]string) error {
 	for req := range in {
-		// log.Printf("%v %s", req.Payload, req.Payload)
 		ok := false
 		switch req.Type {
 		case "exec":
@@ -137,7 +135,6 @@ func main() {
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			return nil, nil
 		},
-
 		//		Remove to disable public key auth.
 		PublicKeyCallback: func(c ssh.ConnMetadata, pubKey ssh.PublicKey) (*ssh.Permissions, error) {
 			return nil, nil
