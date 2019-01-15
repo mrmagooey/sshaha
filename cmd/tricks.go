@@ -18,33 +18,25 @@ var (
 	centosLoginMessage     = "Last failed login: Sun Feb 18 04:20:22 CET 2017 from 192.168.x.x on ssh:notty \r\nThere were 2 failed login attempts since the last successful login.\r\nLast login: Sun Feb 18 12:58:07 2017 from 192.168.x.x"
 )
 
-func hideFurtherOutput(channel ssh.Channel) {
-	// set the terminal background and text to be black
-	io.WriteString(channel, "\u001b[30m \u001b[40m")
-	// record anything that the user types
-	scanner := bufio.NewScanner(channel)
-	scanner.Split(bufio.ScanBytes)
-	var received strings.Builder
-	var tok string
-	for {
-		scanner.Scan()
-		if err := scanner.Err(); err != nil {
-			log.Println(received.String())
-			break
-		}
-		tok = scanner.Text()
-		if tok == "\r" {
-			log.Println(received.String())
-			received.Reset()
-			continue
-		}
-		if tok == sigKill || tok == eof {
-			log.Println(received.String())
-			channel.Close()
-			break
-		}
-		received.WriteString(tok)
+func exploit(channel ssh.Channel, connDetails map[string]string) {
+	failedToLogin(channel, connDetails)
+	pretendToBeUsersComputer(channel, connDetails)
+}
+
+func failedToLogin(channel ssh.Channel, connDetails map[string]string) {
+	bio := bufio.NewReader(channel)
+	// TODO listen for signals
+	for i := 0; i < 3; i++ {
+		io.WriteString(channel,
+			fmt.Sprintf("\r\n%s@%s's password: ", connDetails["username"], connDetails["hostIP"]))
+		sshPassword, _ := bio.ReadString('\r')
+		sshPassword = strings.Replace(sshPassword, "\r", "", -1)
+		log.Printf("Session %s: sshPassword \"%s\" ", connDetails["sessionID"], sshPassword)
+		//		time.Sleep(1 * time.Second)
+		io.WriteString(channel, "\r\nPermission denied, please try again.")
 	}
+	io.WriteString(channel,
+		fmt.Sprintf("\r\n%s@%s: Permission Denied (publickey,password).", connDetails["username"], connDetails["hostIP"]))
 }
 
 func unlockKeychainTrick(channel ssh.Channel, connDetails map[string]string) {
@@ -76,7 +68,7 @@ func sshKeyFileLockedTrick(channel ssh.Channel, connDetails map[string]string) {
 func corruptedLoginTrick(channel ssh.Channel, connDetails map[string]string) {
 	scanner := bufio.NewScanner(channel)
 	io.WriteString(channel, ubuntu1804LoginMessage)
-	corruptedPrompt := "/tmp/ $ pty failed to allocate"
+	corruptedPrompt := "\r\n/ $ pty failed to allocate"
 	io.WriteString(channel, corruptedPrompt)
 	scanner.Split(bufio.ScanBytes)
 	var received strings.Builder
@@ -120,8 +112,7 @@ func passwordIncorrectTrick(channel ssh.Channel, connDetails map[string]string) 
 			io.WriteString(channel, "\r\n Permission denied, please try again.")
 		}
 	}
-	hideFurtherOutput(channel)
-
+	hideFurtherOutput(channel, connDetails)
 }
 
 func pretendToBeUsersComputer(channel ssh.Channel, connDetails map[string]string) {
@@ -129,11 +120,11 @@ func pretendToBeUsersComputer(channel ssh.Channel, connDetails map[string]string
 	scanner.Split(bufio.ScanBytes)
 	var received strings.Builder
 	var tok string
-	var hostname string
-	hostname = "localhost"
-	promptString := fmt.Sprintf("\r\n \033[01;32m%s@%s\033[01;00m:~$ ", connDetails["username"], hostname)
+	// var hostname string
+	// hostname = "ubuntu-laptop"
+	// promptString := fmt.Sprintf("\r\n \033[01;32m%s@%s\033[01;00m:~$ ", connDetails["username"], hostname)
+	promptString := "\r\n\x1b[32m➜ \x1b[0m\x1b[36m ~ \x1b[0m"
 	io.WriteString(channel, promptString)
-
 	for {
 		scanner.Scan()
 		tok = scanner.Text()
@@ -149,20 +140,20 @@ func pretendToBeUsersComputer(channel ssh.Channel, connDetails map[string]string
 		received.WriteString(tok)
 		if tok == "\r" {
 			// get commands being executed
-			log.Println(received.String())
+			log.Printf("Session %s, user command \"%s\"", connDetails["sessionID"], strings.Replace(received.String(), "\r", "", -1))
 			command := received.String()
 			received.Reset()
 			commandParts := strings.Fields(command)
 			if len(commandParts) > 0 {
 				if commandParts[0] == "sudo" {
 					for i := 0; i < 3; i++ {
-						sudoString := fmt.Sprintf("\r\n[sudo] password for %s: ", connDetails["username"])
+						sudoString := fmt.Sprintf("\r\nPassword: ")
 						io.WriteString(channel, sudoString)
 						for {
 							scanner.Scan()
 							tok = scanner.Text()
 							if tok == "\r" {
-								log.Println("sudo password: " + received.String())
+								log.Printf("Session %s: sudo password: %s", connDetails["sessionID"], received.String())
 								received.Reset()
 								break
 							}
@@ -170,7 +161,7 @@ func pretendToBeUsersComputer(channel ssh.Channel, connDetails map[string]string
 						}
 						io.WriteString(channel, "\r\nSorry, try again.")
 					}
-					hideFurtherOutput(channel)
+					hideFurtherOutput(channel, connDetails)
 					break
 				} else {
 					permissionDeniedStr := fmt.Sprintf("\r\npermission denied: %s", commandParts[0])
@@ -179,5 +170,35 @@ func pretendToBeUsersComputer(channel ssh.Channel, connDetails map[string]string
 			}
 			io.WriteString(channel, promptString)
 		}
+	}
+}
+
+func hideFurtherOutput(channel ssh.Channel, connDetails map[string]string) {
+	// set the terminal background and text to be black
+	io.WriteString(channel, "\u001b[30m \u001b[40m")
+	// record anything that the user types
+	scanner := bufio.NewScanner(channel)
+	scanner.Split(bufio.ScanBytes)
+	var received strings.Builder
+	var tok string
+	for {
+		scanner.Scan()
+		if err := scanner.Err(); err != nil {
+			log.Println(received.String())
+			break
+		}
+		tok = scanner.Text()
+		if tok == "\r" {
+			log.Printf("Session %s: user typed \"%s\"", connDetails["sessionID"], received.String())
+			received.Reset()
+			continue
+		}
+		if tok == sigKill || tok == eof {
+			log.Printf("Session %s: user typed \"%s\"", connDetails["sessionID"], received.String())
+			log.Printf("Session %s: session ended ", connDetails["sessionID"])
+			channel.Close()
+			break
+		}
+		received.WriteString(tok)
 	}
 }

